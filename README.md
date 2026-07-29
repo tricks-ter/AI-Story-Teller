@@ -29,7 +29,7 @@ A full-stack AI chatbot using **GLM-4.7-Flash** via the [Z.AI SDK](https://githu
 
 ```
 /
-├── backend/
+├── api/
 │   ├── main.py              # FastAPI application
 │   ├── requirements.txt     # Python dependencies (pinned)
 │   ├── .env                 # API key (git-ignored)
@@ -39,10 +39,12 @@ A full-stack AI chatbot using **GLM-4.7-Flash** via the [Z.AI SDK](https://githu
 │   ├── src/
 │   │   ├── App.jsx          # Root component with state management
 │   │   ├── components/      # UI components
-│   │   └── utils/api.js     # Backend API client with SSE streaming
+│   │   └── utils/api.js     # API client with SSE streaming
 │   ├── package.json         # Frontend dependencies (pinned)
 │   └── vite.config.js       # Vite configuration with proxy
-├── start.sh                 # One-command start script
+├── vercel.json              # Root Vercel deployment config
+├── render.yaml              # Render.com deployment blueprint
+├── start.sh                 # One-command local start script
 └── README.md
 ```
 
@@ -54,17 +56,17 @@ A full-stack AI chatbot using **GLM-4.7-Flash** via the [Z.AI SDK](https://githu
 
 ```bash
 # Copy the example file
-cp backend/.env.example backend/.env
+cp api/.env.example api/.env
 
 # Edit it and paste your Z.AI API key
-nano backend/.env
+nano api/.env
 # ZAI_API_KEY=your-actual-key
 ```
 
-### 2. Install Backend Dependencies
+### 2. Install API Dependencies
 
 ```bash
-cd backend
+cd api
 pip install -r requirements.txt
 ```
 
@@ -88,8 +90,8 @@ npm install
 ### Manually
 
 ```bash
-# Terminal 1 — Backend
-cd backend
+# Terminal 1 — API
+cd api
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 # Terminal 2 — Frontend

@@ -34,7 +34,7 @@ Fill in the form:
 | Name | `glm-chat-backend` (or anything you like) |
 | Region | Choose one close to you |
 | Branch | `main` |
-| Root Directory | `backend` |
+| Root Directory | `api` |
 | Runtime | **Python 3** |
 | Build Command | `pip install -r requirements.txt` |
 | Start Command | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
