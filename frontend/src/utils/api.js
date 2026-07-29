@@ -1,45 +1,30 @@
-// On Vercel (same-domain deployment) VITE_API_URL is not set,
-// so BASE_URL defaults to "/api" — all routes are served at /api/* on the same domain.
-// For an external backend (e.g. Render), set VITE_API_URL to the root of that server,
-// e.g. VITE_API_URL=https://glm-chat-api.onrender.com (note: no trailing /api — it is appended here).
+// On Vercel (same-domain) VITE_API_URL is not set → BASE_URL = "/api".
+// For an external backend (e.g. Render), set VITE_API_URL to the server root
+// (without trailing slash). The "/api" segment is appended automatically.
 const _rawBase = import.meta.env.VITE_API_URL;
 const BASE_URL = _rawBase ? _rawBase.replace(/\/$/, "") + "/api" : "/api";
 
-export async function createSession() {
-  const res = await fetch(`${BASE_URL}/sessions`, { method: "POST" });
-  if (!res.ok) throw new Error("Failed to create session");
-  return res.json();
-}
-
-export async function listSessions() {
-  const res = await fetch(`${BASE_URL}/sessions`);
-  if (!res.ok) throw new Error("Failed to list sessions");
-  return res.json();
-}
-
-export async function getMessages(sessionId) {
-  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/messages`);
-  if (!res.ok) throw new Error("Failed to load messages");
-  return res.json();
-}
-
-export async function deleteSession(sessionId) {
-  const res = await fetch(`${BASE_URL}/sessions/${sessionId}`, { method: "DELETE" });
-  if (!res.ok) throw new Error("Failed to delete session");
+export async function checkHealth() {
+  const res = await fetch(`${BASE_URL}/health`);
+  if (!res.ok) throw new Error("Backend unreachable");
   return res.json();
 }
 
 /**
- * Stream chat response. Returns a ReadableStream reader.
- * Calls onEvent(event) for each SSE event parsed.
+ * Open a streaming chat request.
+ * @param {Array<{role:string, content:string}>} messages - Full conversation history
+ *        including the new user message as the last item.
+ * @param {(event: object) => void} onEvent  - Called for each SSE event.
+ * @param {(err: Error) => void}    onError  - Called on network/stream errors.
+ * @returns {() => void} cancel - Call to abort the stream.
  */
-export function streamChat(sessionId, message, onEvent, onError) {
+export function streamChat(messages, onEvent, onError) {
   const controller = new AbortController();
 
   fetch(`${BASE_URL}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, message }),
+    body: JSON.stringify({ messages }),
     signal: controller.signal,
   })
     .then(async (res) => {
@@ -66,10 +51,9 @@ export function streamChat(sessionId, message, onEvent, onError) {
             const raw = line.slice(6).trim();
             if (!raw) continue;
             try {
-              const event = JSON.parse(raw);
-              onEvent(event);
+              onEvent(JSON.parse(raw));
             } catch {
-              // skip malformed
+              // skip malformed frames
             }
           }
         }
