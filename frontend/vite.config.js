@@ -6,9 +6,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/sessions": "http://localhost:8000",
-      "/chat": "http://localhost:8000",
-      "/health": "http://localhost:8000",
+      // Forward all /api/* calls to the local FastAPI server during development.
+      "/api": "http://localhost:8000",
     },
   },
 });
