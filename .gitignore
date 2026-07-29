@@ -1,6 +1,6 @@
 # Environment variables (contains API keys)
-backend/.env
-backend/chat_history.json
+api/.env
+api/chat_history.json
 
 # Python
 __pycache__/

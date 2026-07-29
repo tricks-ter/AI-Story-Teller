@@ -38,7 +38,7 @@ jobs:
       - name: Build
         working-directory: frontend
         env:
-          # Replace with your deployed backend URL (e.g. Render or Railway)
+          # Replace with your deployed api URL (e.g. Render or Railway)
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
         run: npm run build
 
