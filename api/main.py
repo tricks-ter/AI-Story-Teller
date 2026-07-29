@@ -29,8 +29,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# DATA_DIR can be overridden via env var (e.g. Render persistent disk path)
-_data_dir = Path(os.getenv("DATA_DIR", "."))
+# DATA_DIR defaults to /tmp so chat_history.json is writable on Vercel
+# (only /tmp is writable in Vercel serverless functions).
+# Override via env var for persistent storage on other hosts (e.g. DATA_DIR=/data on Render).
+_data_dir = Path(os.getenv("DATA_DIR", "/tmp"))
 DB_PATH = _data_dir / "chat_history.json"
 API_KEY = os.getenv("ZAI_API_KEY", "")
 MODEL = "glm-4.7-flash"
