@@ -2,6 +2,8 @@
 
 A full-stack AI chatbot using **GLM-4.7-Flash** via the [Z.AI SDK](https://github.com/zai-org/zai-python-sdk), with a React frontend and a FastAPI backend.
 
+> **Hosting instructions** → [DEPLOYMENT.md](./DEPLOYMENT.md)
+
 ---
 
 ## Tech Stack

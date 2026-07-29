@@ -16,15 +16,22 @@ load_dotenv()
 
 app = FastAPI(title="GLM Chat API", version="1.0.0")
 
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,http://localhost:3000",
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-DB_PATH = Path("chat_history.json")
+# DATA_DIR can be overridden via env var (e.g. Render persistent disk path)
+_data_dir = Path(os.getenv("DATA_DIR", "."))
+DB_PATH = _data_dir / "chat_history.json"
 API_KEY = os.getenv("ZAI_API_KEY", "")
 MODEL = "glm-4.7-flash"
 
