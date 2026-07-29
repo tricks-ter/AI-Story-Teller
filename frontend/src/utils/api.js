@@ -1,4 +1,9 @@
-const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+// On Vercel (same-domain deployment) VITE_API_URL is not set,
+// so BASE_URL defaults to "/api" — all routes are served at /api/* on the same domain.
+// For an external backend (e.g. Render), set VITE_API_URL to the root of that server,
+// e.g. VITE_API_URL=https://glm-chat-api.onrender.com (note: no trailing /api — it is appended here).
+const _rawBase = import.meta.env.VITE_API_URL;
+const BASE_URL = _rawBase ? _rawBase.replace(/\/$/, "") + "/api" : "/api";
 
 export async function createSession() {
   const res = await fetch(`${BASE_URL}/sessions`, { method: "POST" });

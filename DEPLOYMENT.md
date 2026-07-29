@@ -108,7 +108,9 @@ In the **Environment Variables** section add:
 
 | Name | Value |
 |---|---|
-| `VITE_API_URL` | `https://glm-chat-backend.onrender.com` *(your Render URL from Part 1)* |
+| `VITE_API_URL` | `https://glm-chat-api.onrender.com` *(your Render URL from Part 1, **without** a trailing slash)* |
+
+> The frontend code automatically appends `/api` to this URL, so set it to the bare server root.
 
 ### Step 4 — Deploy
 
@@ -149,7 +151,7 @@ Use this if you prefer to stay entirely within GitHub.
 
 | Name | Secret value |
 |---|---|
-| `VITE_API_URL` | `https://glm-chat-backend.onrender.com` *(your Render URL)* |
+| `VITE_API_URL` | `https://glm-chat-api.onrender.com` *(your Render URL, **without** trailing slash)* |
 
 ### Step 3 — Trigger the workflow
 
@@ -199,7 +201,7 @@ ALLOWED_ORIGINS=https://yourusername.github.io
 
 | Variable | Required | Description |
 |---|---|---|
-| `VITE_API_URL` | Yes (production) | Full URL of the deployed backend, e.g. `https://glm-chat-backend.onrender.com` |
+| `VITE_API_URL` | Yes (external backend) | Root URL of the hosted backend, e.g. `https://glm-chat-api.onrender.com`. The `/api` suffix is appended automatically. Leave unset for Vercel same-domain deployment. |
 
 ---
 

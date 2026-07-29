@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -83,15 +83,20 @@ class SessionInfo(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Routes
+# Router — all routes live under /api prefix
+# Vercel routes /api/(.*)  →  this file, so FastAPI receives /api/<path>.
+# The frontend always calls /api/<path> (or VITE_API_URL + /api/<path>).
 # ---------------------------------------------------------------------------
 
-@app.get("/health")
+router = APIRouter(prefix="/api")
+
+
+@router.get("/health")
 def health():
     return {"status": "ok", "model": MODEL}
 
 
-@app.post("/sessions", response_model=CreateSessionResponse)
+@router.post("/sessions", response_model=CreateSessionResponse)
 def create_session():
     db = load_db()
     session_id = str(uuid.uuid4())
@@ -106,7 +111,7 @@ def create_session():
     return {"session_id": session_id, "created_at": now}
 
 
-@app.get("/sessions")
+@router.get("/sessions")
 def list_sessions():
     db = load_db()
     sessions = []
@@ -121,7 +126,7 @@ def list_sessions():
     return {"sessions": sessions}
 
 
-@app.get("/sessions/{session_id}/messages")
+@router.get("/sessions/{session_id}/messages")
 def get_messages(session_id: str):
     db = load_db()
     session = db["sessions"].get(session_id)
@@ -130,7 +135,7 @@ def get_messages(session_id: str):
     return {"messages": session["messages"]}
 
 
-@app.delete("/sessions/{session_id}")
+@router.delete("/sessions/{session_id}")
 def delete_session(session_id: str):
     db = load_db()
     if session_id not in db["sessions"]:
@@ -140,7 +145,7 @@ def delete_session(session_id: str):
     return {"status": "deleted"}
 
 
-@app.post("/chat/stream")
+@router.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
     db = load_db()
 
@@ -159,11 +164,9 @@ async def chat_stream(request: ChatRequest):
 
     session = db["sessions"][session_id]
 
-    # Build message history for the API
     history = [{"role": m["role"], "content": m["content"]} for m in session["messages"]]
     history.append({"role": "user", "content": request.message})
 
-    # Persist user message immediately
     user_msg = {
         "id": str(uuid.uuid4()),
         "role": "user",
@@ -172,7 +175,6 @@ async def chat_stream(request: ChatRequest):
     }
     session["messages"].append(user_msg)
 
-    # Update title from first user message
     if len(session["messages"]) == 1:
         session["title"] = request.message[:50] + ("..." if len(request.message) > 50 else "")
 
@@ -181,7 +183,6 @@ async def chat_stream(request: ChatRequest):
     client = get_client()
 
     async def generate() -> AsyncGenerator[str, None]:
-        # Send session_id first so the client can track it
         yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id})}\n\n"
 
         full_content = ""
@@ -214,7 +215,6 @@ async def chat_stream(request: ChatRequest):
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
             return
 
-        # Persist assistant message
         assistant_msg = {
             "id": str(uuid.uuid4()),
             "role": "assistant",
@@ -236,3 +236,6 @@ async def chat_stream(request: ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+app.include_router(router)
