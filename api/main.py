@@ -1,7 +1,8 @@
 """
-GLM Chat API — FastAPI backend
-Supports: chat completion, web search (Z.AI API), web reader (Z.AI API),
-          function calling with agentic loop, exponential-backoff retry on 429.
+GLM Chat API — FastAPI backend v4
+  - Built-in Z.AI web search tool (type: "web_search") → zero extra API calls
+  - Web reader via function calling + agentic loop (1 iteration max)
+  - Exponential-backoff retry on 429 rate limits
 """
 import asyncio
 import json
@@ -19,7 +20,7 @@ from zai import ZaiClient
 
 load_dotenv()
 
-app = FastAPI(title="GLM Chat API", version="3.0.0")
+app = FastAPI(title="GLM Chat API", version="4.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,44 +30,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = os.getenv("ZAI_API_KEY", "")
+API_KEY      = os.getenv("ZAI_API_KEY", "")
 ZAI_API_BASE = "https://api.z.ai/api"
 
 ALLOWED_MODELS = {"glm-4.7-flash", "glm-4.5-flash", "glm-4-flash"}
-DEFAULT_MODEL = "glm-4.7-flash"
+DEFAULT_MODEL  = "glm-4.7-flash"
 
-MAX_RETRIES = 3
-RETRY_BASE_DELAY = 2.0
-RETRY_MAX_DELAY = 30.0
-MAX_TOOL_ITERATIONS = 3   # max agentic steps before forcing final answer
-WEB_CONTENT_LIMIT = 6000  # chars — cap reader output to limit token usage
+MAX_RETRIES        = 3
+RETRY_BASE_DELAY   = 2.0
+RETRY_MAX_DELAY    = 30.0
+MAX_READER_ITERS   = 2    # max tool-call iterations for web reader
+WEB_CONTENT_LIMIT  = 6000 # chars — cap reader output to limit tokens
 
-# ---------------------------------------------------------------------------
-# Tool schemas passed to the model
-# ---------------------------------------------------------------------------
-
-WEB_SEARCH_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "web_search",
-        "description": (
-            "Search the web for real-time information. Use this for current events, "
-            "news, facts that may have changed recently, prices, scores, or any topic "
-            "that needs up-to-date data from the internet."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query — be specific for better results.",
-                }
-            },
-            "required": ["query"],
+# ── Built-in web search tool (handled natively by Z.AI, not a function call) ──
+def _make_web_search_tool() -> dict:
+    return {
+        "type": "web_search",
+        "web_search": {
+            "enable": "True",
+            "search_engine": "search-prime",
+            "search_result": "True",
+            "count": "5",
         },
-    },
-}
+    }
 
+# ── Web reader as a function-call tool ────────────────────────────────────────
 WEB_READER_TOOL = {
     "type": "function",
     "function": {
@@ -89,54 +77,19 @@ WEB_READER_TOOL = {
     },
 }
 
-# ---------------------------------------------------------------------------
-# Tool execution helpers (synchronous — called inside thread pool)
-# ---------------------------------------------------------------------------
 
-def _zai_headers() -> dict:
-    return {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-
-def execute_web_search(query: str) -> dict:
-    """Call Z.AI Web Search API and return structured results."""
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            resp = client.post(
-                f"{ZAI_API_BASE}/paas/v4/web_search",
-                headers=_zai_headers(),
-                json={
-                    "search_engine": "search-prime",
-                    "search_query": query,
-                    "count": 5,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            raw_results = data.get("search_result", [])
-            results = [
-                {
-                    "title": r.get("title", ""),
-                    "url": r.get("link", ""),
-                    "summary": r.get("content", ""),
-                    "date": r.get("publish_date", ""),
-                }
-                for r in raw_results[:5]
-            ]
-            return {"success": True, "query": query, "results": results}
-    except Exception as exc:
-        return {"success": False, "error": str(exc), "query": query, "results": []}
-
+# ── Tool executor ──────────────────────────────────────────────────────────────
 
 def execute_web_reader(url: str) -> dict:
-    """Call Z.AI Web Reader API and return page content."""
+    """Call Z.AI Web Reader API and return page markdown content."""
     try:
         with httpx.Client(timeout=20.0) as client:
             resp = client.post(
                 f"{ZAI_API_BASE}/paas/v4/reader",
-                headers=_zai_headers(),
+                headers={
+                    "Authorization": f"Bearer {API_KEY}",
+                    "Content-Type": "application/json",
+                },
                 json={
                     "url": url,
                     "return_format": "markdown",
@@ -144,8 +97,15 @@ def execute_web_reader(url: str) -> dict:
                     "with_links_summary": False,
                 },
             )
-            resp.raise_for_status()
             data = resp.json()
+            if "error" in data:
+                return {
+                    "success": False,
+                    "error": data["error"].get("message", "Reader API error"),
+                    "url": url,
+                    "content": f"Could not read this URL. Error: {data['error'].get('message', 'unknown')}",
+                }
+            resp.raise_for_status()
             reader_result = data.get("reader_result", {})
             content = reader_result.get("content", "")
             if len(content) > WEB_CONTENT_LIMIT:
@@ -155,18 +115,21 @@ def execute_web_reader(url: str) -> dict:
                 "url": url,
                 "title": reader_result.get("title", ""),
                 "description": reader_result.get("description", ""),
-                "content": content,
+                "content": content or "No content extracted from this URL.",
             }
     except Exception as exc:
-        return {"success": False, "error": str(exc), "url": url, "content": ""}
+        return {
+            "success": False,
+            "error": str(exc),
+            "url": url,
+            "content": f"Failed to read URL: {exc}",
+        }
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _friendly_error(raw: str) -> str | None:
-    """None means 'rate limited — retry'. Otherwise returns user-facing message."""
+    """Return None → rate limited (retry). Otherwise return user-facing message."""
     if "429" in raw or "1302" in raw or "rate limit" in raw.lower():
         return None
     if "401" in raw or "1002" in raw or "authorization" in raw.lower():
@@ -185,9 +148,7 @@ def get_client() -> ZaiClient:
     return ZaiClient(api_key=API_KEY)
 
 
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
+# ── Pydantic models ───────────────────────────────────────────────────────────
 
 class MessageItem(BaseModel):
     role: str
@@ -195,18 +156,16 @@ class MessageItem(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    messages: list[MessageItem]
-    model: str = DEFAULT_MODEL
-    max_tokens: int = Field(default=4096, ge=256, le=8192)
-    temperature: float = Field(default=0.7, ge=0.0, le=1.5)
-    enable_thinking: bool = True
-    enable_web_search: bool = False   # opt-in (costs $0.01/use)
-    enable_web_reader: bool = False   # opt-in
+    messages:           list[MessageItem]
+    model:              str   = DEFAULT_MODEL
+    max_tokens:         int   = Field(default=4096, ge=256, le=8192)
+    temperature:        float = Field(default=0.7, ge=0.0, le=1.5)
+    enable_thinking:    bool  = True
+    enable_web_search:  bool  = False  # built-in tool — $0.01/use on Z.AI
+    enable_web_reader:  bool  = False  # function-call tool — reads URLs
 
 
-# ---------------------------------------------------------------------------
-# Router
-# ---------------------------------------------------------------------------
+# ── Router ────────────────────────────────────────────────────────────────────
 
 router = APIRouter(prefix="/api")
 
@@ -217,7 +176,7 @@ def health():
         "status": "ok",
         "models": sorted(ALLOWED_MODELS),
         "default_model": DEFAULT_MODEL,
-        "tools": ["web_search", "web_reader"],
+        "tools": ["web_search (built-in)", "web_reader (function-call)"],
     }
 
 
@@ -226,19 +185,12 @@ async def chat_stream(request: ChatRequest):
     if not request.messages:
         raise HTTPException(status_code=400, detail="messages must not be empty")
 
-    model = request.model if request.model in ALLOWED_MODELS else DEFAULT_MODEL
+    model  = request.model if request.model in ALLOWED_MODELS else DEFAULT_MODEL
     client = get_client()
     history = [{"role": m.role, "content": m.content} for m in request.messages]
 
-    # Build the tool list based on user settings
-    active_tools: list[dict] = []
-    if request.enable_web_search:
-        active_tools.append(WEB_SEARCH_TOOL)
-    if request.enable_web_reader:
-        active_tools.append(WEB_READER_TOOL)
-
     async def generate() -> AsyncGenerator[str, None]:
-        # ── Flush first byte immediately to prevent Vercel buffering ──────────
+        # ── Flush first byte so Vercel starts streaming immediately ───────────
         yield f"data: {json.dumps({'type': 'status', 'message': 'connected'})}\n\n"
 
         loop = asyncio.get_event_loop()
@@ -252,183 +204,149 @@ async def chat_stream(request: ChatRequest):
                 yield f"data: {json.dumps({'type': 'status', 'message': f'Rate limited. Retrying in {delay:.0f}s (attempt {attempt}/{MAX_RETRIES})…'})}\n\n"
                 await asyncio.sleep(delay)
 
-            queue: asyncio.Queue = asyncio.Queue()
-            got_rate_limit = False
-            got_content = False
+            queue:          asyncio.Queue = asyncio.Queue()
+            got_rate_limit: bool          = False
+            got_content:    bool          = False
 
-            # ── Captured variables for the thread ────────────────────────────
-            _model = model
-            _history = list(history)
-            _request = request
-            _active_tools = list(active_tools)
-            _client = client
+            _model      = model
+            _history    = list(history)
+            _request    = request
+            _client     = client
 
             def do_stream() -> None:
-                """
-                Agentic loop running in a thread:
-                1. If tools enabled: make non-streaming calls to detect tool_calls.
-                2. Execute tools (web_search / web_reader) and add results.
-                3. Repeat until model stops calling tools or MAX_TOOL_ITERATIONS.
-                4. Make a final STREAMING call for the model's answer.
-                """
                 nonlocal got_content
+
                 working_messages = list(_history)
-                pending_sources: list[dict] = []
 
-                def send(event: dict) -> None:
-                    loop.call_soon_threadsafe(queue.put_nowait, event)
-
-                def finish_with_rate_limit() -> None:
-                    send({"type": "_rate_limit"})
-
-                def finish_with_error(msg: str) -> None:
-                    send({"type": "error", "message": msg})
+                def send(ev: dict) -> None:
+                    loop.call_soon_threadsafe(queue.put_nowait, ev)
 
                 try:
-                    # ── Agentic loop ─────────────────────────────────────────
-                    for iteration in range(MAX_TOOL_ITERATIONS + 1):
+                    # ── Build tool list ───────────────────────────────────────
+                    # Built-in web_search: passed directly to chat completion
+                    # web_reader: function-call tool requiring an agentic loop
+                    builtin_tools   = [_make_web_search_tool()] if _request.enable_web_search else []
+                    function_tools  = [WEB_READER_TOOL]         if _request.enable_web_reader  else []
 
-                        if iteration == MAX_TOOL_ITERATIONS or not _active_tools:
-                            # Final pass: always streaming, no tools
-                            _do_streaming_pass(
-                                _client, _model, working_messages,
-                                _request, send, pending_sources
-                            )
-                            break
-
-                        # ── Non-streaming tool-detection pass ─────────────────
-                        kwargs = {
-                            "model": _model,
-                            "messages": working_messages,
-                            "max_tokens": min(_request.max_tokens, 1024),  # short pass
-                            "temperature": _request.temperature,
-                            "tools": _active_tools,
-                            "tool_choice": "auto",
-                        }
-                        resp = _client.chat.completions.create(**kwargs)
-                        choice = resp.choices[0]
-                        msg = choice.message
-
-                        has_tool_calls = bool(getattr(msg, "tool_calls", None))
-
-                        if has_tool_calls:
-                            # Add assistant message to history
-                            asst_entry: dict = {
-                                "role": "assistant",
-                                "content": msg.content or "",
+                    # ── Web-reader agentic loop ───────────────────────────────
+                    if function_tools:
+                        for iteration in range(MAX_READER_ITERS):
+                            # Non-streaming pass to detect function tool_calls
+                            kwargs: dict = {
+                                "model":       _model,
+                                "messages":    working_messages,
+                                "max_tokens":  min(_request.max_tokens, 2048),
+                                "temperature": _request.temperature,
+                                "tools":       function_tools + builtin_tools,
+                                "tool_choice": "auto",
                             }
-                            asst_entry["tool_calls"] = [
-                                {
-                                    "id": tc.id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tc.function.name,
-                                        "arguments": tc.function.arguments,
-                                    },
-                                }
-                                for tc in msg.tool_calls
+                            resp  = _client.chat.completions.create(**kwargs)
+                            choice = resp.choices[0]
+                            msg    = choice.message
+
+                            fn_calls = [
+                                tc for tc in (getattr(msg, "tool_calls", None) or [])
+                                if tc.function.name == "web_reader"
                             ]
-                            working_messages.append(asst_entry)
 
-                            # Execute each tool call
-                            for tc in msg.tool_calls:
-                                fn = tc.function.name
-                                try:
-                                    args = json.loads(tc.function.arguments)
-                                except Exception:
-                                    args = {}
+                            if fn_calls:
+                                # Add assistant message with tool_calls
+                                asst: dict = {
+                                    "role":    "assistant",
+                                    "content": msg.content or "",
+                                    "tool_calls": [
+                                        {
+                                            "id": tc.id,
+                                            "type": "function",
+                                            "function": {
+                                                "name":      tc.function.name,
+                                                "arguments": tc.function.arguments,
+                                            },
+                                        }
+                                        for tc in fn_calls
+                                    ],
+                                }
+                                working_messages.append(asst)
 
-                                send({"type": "tool_call", "tool": fn, "args": args})
+                                for tc in fn_calls:
+                                    try:
+                                        args = json.loads(tc.function.arguments)
+                                    except Exception:
+                                        args = {}
+                                    url = args.get("url", "")
 
-                                if fn == "web_search":
-                                    result = execute_web_search(args.get("query", ""))
-                                    # Accumulate sources for citation display
-                                    if result.get("success") and result.get("results"):
-                                        pending_sources.extend(result["results"])
+                                    send({"type": "tool_call", "tool": "web_reader", "args": {"url": url}})
+                                    result = execute_web_reader(url)
                                     send({
-                                        "type": "tool_result",
-                                        "tool": "web_search",
-                                        "count": len(result.get("results", [])),
+                                        "type":    "tool_result",
+                                        "tool":    "web_reader",
+                                        "title":   result.get("title", url),
                                         "success": result.get("success", False),
                                     })
-                                elif fn == "web_reader":
-                                    result = execute_web_reader(args.get("url", ""))
-                                    send({
-                                        "type": "tool_result",
-                                        "tool": "web_reader",
-                                        "title": result.get("title", args.get("url", "")),
-                                        "success": result.get("success", False),
+                                    working_messages.append({
+                                        "role":        "tool",
+                                        "content":     json.dumps(result, ensure_ascii=False),
+                                        "tool_call_id": tc.id,
                                     })
-                                else:
-                                    result = {"error": f"Unknown tool: {fn}"}
-                                    send({"type": "tool_result", "tool": fn, "success": False})
 
-                                working_messages.append({
-                                    "role": "tool",
-                                    "content": json.dumps(result, ensure_ascii=False),
-                                    "tool_call_id": tc.id,
-                                })
-
-                            # Continue loop to check if model wants more tools
-                            continue
-
-                        else:
-                            # Model didn't call any tools → stream the final answer
-                            _do_streaming_pass(
-                                _client, _model, working_messages,
-                                _request, send, pending_sources
-                            )
+                                if iteration < MAX_READER_ITERS - 1:
+                                    continue  # give model another pass
+                            # No function tool calls — fall through to final stream
                             break
+
+                    # ── Final streaming pass ──────────────────────────────────
+                    # Include built-in web_search here so the model can search
+                    # during generation (the API handles it internally).
+                    stream_kwargs: dict = {
+                        "model":       _model,
+                        "messages":    working_messages,
+                        "stream":      True,
+                        "max_tokens":  _request.max_tokens,
+                        "temperature": _request.temperature,
+                    }
+                    if _request.enable_thinking:
+                        stream_kwargs["thinking"] = {"type": "enabled"}
+                    if builtin_tools:
+                        stream_kwargs["tools"] = builtin_tools
+
+                    stream_resp = _client.chat.completions.create(**stream_kwargs)
+
+                    if _request.enable_web_search:
+                        send({"type": "tool_call", "tool": "web_search", "args": {"query": "…"}})
+
+                    for chunk in stream_resp:
+                        delta     = chunk.choices[0].delta
+                        reasoning = getattr(delta, "reasoning_content", None)
+                        content   = getattr(delta, "content",           None)
+
+                        if reasoning:
+                            send({"type": "thinking", "content": reasoning})
+                        if content:
+                            got_content = True
+                            send({"type": "content",  "content": content})
+
+                    if _request.enable_web_search:
+                        # Notify frontend that web search completed (results are inline)
+                        send({"type": "tool_result", "tool": "web_search", "inline": True, "success": True})
 
                 except Exception as exc:
-                    raw = str(exc)
+                    raw     = str(exc)
                     friendly = _friendly_error(raw)
                     if friendly is None:
-                        finish_with_rate_limit()
+                        loop.call_soon_threadsafe(queue.put_nowait, {"type": "_rate_limit"})
                     else:
-                        finish_with_error(friendly)
+                        loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": friendly})
                 finally:
-                    loop.call_soon_threadsafe(queue.put_nowait, None)  # sentinel
-
-            def _do_streaming_pass(
-                client, model, messages, req, send_fn, sources
-            ) -> None:
-                """Stream the model's final answer after any tool calls."""
-                nonlocal got_content
-                kwargs = {
-                    "model": model,
-                    "messages": messages,
-                    "stream": True,
-                    "max_tokens": req.max_tokens,
-                    "temperature": req.temperature,
-                }
-                if req.enable_thinking:
-                    kwargs["thinking"] = {"type": "enabled"}
-
-                response = client.chat.completions.create(**kwargs)
-                for chunk in response:
-                    delta = chunk.choices[0].delta
-                    reasoning = getattr(delta, "reasoning_content", None)
-                    content = getattr(delta, "content", None)
-
-                    if reasoning:
-                        send_fn({"type": "thinking", "content": reasoning})
-                    if content:
-                        got_content = True
-                        send_fn({"type": "content", "content": content})
-
-                # After streaming is done, emit sources if any
-                if sources:
-                    send_fn({"type": "sources", "sources": sources})
+                    loop.call_soon_threadsafe(queue.put_nowait, None)
 
             future = loop.run_in_executor(None, do_stream)
 
             try:
                 while True:
                     try:
-                        item = await asyncio.wait_for(queue.get(), timeout=50.0)
+                        item = await asyncio.wait_for(queue.get(), timeout=55.0)
                     except asyncio.TimeoutError:
-                        yield f"data: {json.dumps({'type': 'error', 'message': 'The AI did not respond within 50 s. Please try again.'})}\n\n"
+                        yield f"data: {json.dumps({'type': 'error', 'message': 'The AI did not respond within 55 s. Please try again.'})}\n\n"
                         got_rate_limit = False
                         break
 

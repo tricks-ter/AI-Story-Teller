@@ -143,22 +143,31 @@ export default function App() {
             }
 
             case "tool_call": {
-              const isSearch = event.tool === "web_search";
-              const detail = isSearch
-                ? event.args?.query
-                : event.args?.url;
-              setStatusText(
-                `${isSearch ? "🔍 Searching" : "📄 Reading"}: "${detail ?? "…"}"`
-              );
+              if (event.tool === "web_search") {
+                setStatusText("🔍 Searching the web…");
+              } else {
+                const url = event.args?.url ?? "…";
+                setStatusText(`📄 Reading: "${url}"`);
+              }
               break;
             }
 
             case "tool_result": {
-              const isSearch = event.tool === "web_search";
-              if (isSearch && event.count > 0) {
-                setStatusText(`✓ Found ${event.count} results`);
-              } else if (!isSearch && event.title) {
-                setStatusText(`✓ Read: ${event.title}`);
+              if (event.tool === "web_search") {
+                if (event.inline) {
+                  // Built-in search: results are embedded as [ref_N] in content
+                  setStatusText("✓ Web search done — citations are in the response");
+                } else if (event.success) {
+                  setStatusText(`✓ Found ${event.count ?? ""} results`);
+                } else {
+                  setStatusText("⚠ Web search unavailable");
+                }
+              } else if (event.tool === "web_reader") {
+                setStatusText(
+                  event.success
+                    ? `✓ Read: ${event.title || "page"}`
+                    : "⚠ Could not read that URL"
+                );
               } else {
                 setStatusText("✓ Tool done");
               }
