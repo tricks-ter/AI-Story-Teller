@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from typing import AsyncGenerator
@@ -13,8 +14,6 @@ load_dotenv()
 
 app = FastAPI(title="GLM Chat API", version="1.0.0")
 
-# Allow all origins so the API works from any frontend origin
-# (same-domain Vercel deployment, local dev, or external frontends).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -46,13 +45,11 @@ class MessageItem(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    # Full conversation history sent by the client (role + content only).
-    # Session storage is handled entirely on the frontend via localStorage.
     messages: list[MessageItem]
 
 
 # ---------------------------------------------------------------------------
-# Router — all routes under /api prefix
+# Router
 # ---------------------------------------------------------------------------
 
 router = APIRouter(prefix="/api")
@@ -66,42 +63,74 @@ def health():
 @router.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
     if not request.messages:
-        raise HTTPException(status_code=400, detail="messages array must not be empty")
+        raise HTTPException(status_code=400, detail="messages must not be empty")
 
     client = get_client()
-
     history = [{"role": m.role, "content": m.content} for m in request.messages]
 
     async def generate() -> AsyncGenerator[str, None]:
-        full_content = ""
-        thinking_content = ""
+        # ── Yield immediately so Vercel starts streaming the HTTP response
+        # ── right away and doesn't buffer while waiting for the first byte.
+        yield f"data: {json.dumps({'type': 'status', 'message': 'connected'})}\n\n"
+
+        loop = asyncio.get_event_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def do_stream() -> None:
+            """Run the synchronous ZAI streaming call in a thread pool so the
+            asyncio event loop stays free and we can enforce a real timeout."""
+            try:
+                response = client.chat.completions.create(
+                    model=MODEL,
+                    messages=history,
+                    stream=True,
+                    max_tokens=4096,
+                    temperature=0.7,
+                )
+                for chunk in response:
+                    delta = chunk.choices[0].delta
+                    reasoning = getattr(delta, "reasoning_content", None)
+                    content = getattr(delta, "content", None)
+
+                    if reasoning:
+                        loop.call_soon_threadsafe(
+                            queue.put_nowait,
+                            {"type": "thinking", "content": reasoning},
+                        )
+                    if content:
+                        loop.call_soon_threadsafe(
+                            queue.put_nowait,
+                            {"type": "content", "content": content},
+                        )
+            except Exception as exc:
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    {"type": "error", "message": str(exc)},
+                )
+            finally:
+                # Sentinel — tells the async consumer the stream is over
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        future = loop.run_in_executor(None, do_stream)
 
         try:
-            response = client.chat.completions.create(
-                model=MODEL,
-                messages=history,
-                stream=True,
-                max_tokens=4096,
-                temperature=0.7,
-            )
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=50.0)
+                except asyncio.TimeoutError:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'The AI did not respond within 50 seconds. Please try again.'})}\n\n"
+                    break
 
-            for chunk in response:
-                delta = chunk.choices[0].delta
+                if item is None:  # sentinel
+                    break
 
-                reasoning = getattr(delta, "reasoning_content", None)
-                content = getattr(delta, "content", None)
-
-                if reasoning:
-                    thinking_content += reasoning
-                    yield f"data: {json.dumps({'type': 'thinking', 'content': reasoning})}\n\n"
-
-                if content:
-                    full_content += content
-                    yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
-
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-            return
+                yield f"data: {json.dumps(item)}\n\n"
+        finally:
+            # Always wait for the thread so we don't leak it
+            try:
+                await asyncio.wait_for(future, timeout=5.0)
+            except Exception:
+                pass
 
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
