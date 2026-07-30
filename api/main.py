@@ -103,9 +103,18 @@ async def chat_stream(request: ChatRequest):
                             {"type": "content", "content": content},
                         )
             except Exception as exc:
+                raw = str(exc)
+                if "429" in raw or "rate limit" in raw.lower() or "1302" in raw:
+                    msg = "Rate limit reached — please wait a moment and try again."
+                elif "401" in raw or "1002" in raw or "authorization" in raw.lower():
+                    msg = "API key error — check that ZAI_API_KEY is set correctly in Vercel."
+                elif "timeout" in raw.lower():
+                    msg = "The AI took too long to respond. Please try again."
+                else:
+                    msg = raw
                 loop.call_soon_threadsafe(
                     queue.put_nowait,
-                    {"type": "error", "message": str(exc)},
+                    {"type": "error", "message": msg},
                 )
             finally:
                 # Sentinel — tells the async consumer the stream is over
