@@ -3,37 +3,40 @@ import MessageBubble from "./MessageBubble";
 import TypingIndicator from "./TypingIndicator";
 import EmptyState from "./EmptyState";
 
-export default function ChatWindow({ messages, streamingMsg, isStreaming, onSuggestion }) {
+export default function ChatWindow({
+  messages,
+  streamingMsg,
+  isStreaming,
+  statusText,
+  onSuggestion,
+}) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingMsg]);
+  }, [messages, streamingMsg, statusText]);
 
   const hasMessages = messages.length > 0 || streamingMsg;
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div className="flex-1 overflow-y-auto overscroll-contain">
       {!hasMessages ? (
         <EmptyState onSuggestion={onSuggestion} />
       ) : (
-        <div className="max-w-3xl mx-auto px-4 py-6 space-y-8">
+        <div className="max-w-3xl mx-auto px-3 sm:px-4 py-4 sm:py-6 space-y-6 sm:space-y-8">
           {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} isStreaming={false} />
           ))}
 
-          {/* Streaming assistant message */}
           {streamingMsg && (
-            <MessageBubble
-              message={streamingMsg}
-              isStreaming={isStreaming}
-            />
+            <MessageBubble message={streamingMsg} isStreaming={isStreaming} />
           )}
 
-          {/* Typing indicator while connecting */}
-          {isStreaming && !streamingMsg && <TypingIndicator />}
+          {isStreaming && !streamingMsg && (
+            <TypingIndicator statusText={statusText} />
+          )}
 
-          <div ref={bottomRef} />
+          <div ref={bottomRef} className="h-1" />
         </div>
       )}
     </div>
