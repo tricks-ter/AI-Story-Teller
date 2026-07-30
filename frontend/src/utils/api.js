@@ -1,8 +1,5 @@
-// On Vercel (same-domain) VITE_API_URL is not set → BASE_URL = "/api".
-// For an external backend (e.g. Render), set VITE_API_URL to the server root
-// (without trailing slash). The "/api" segment is appended automatically.
-const _rawBase = import.meta.env.VITE_API_URL;
-const BASE_URL = _rawBase ? _rawBase.replace(/\/$/, "") + "/api" : "/api";
+const _raw = import.meta.env.VITE_API_URL;
+const BASE_URL = _raw ? _raw.replace(/\/$/, "") + "/api" : "/api";
 
 export async function checkHealth() {
   const res = await fetch(`${BASE_URL}/health`);
@@ -12,19 +9,25 @@ export async function checkHealth() {
 
 /**
  * Open a streaming chat request.
- * @param {Array<{role:string, content:string}>} messages - Full conversation history
- *        including the new user message as the last item.
- * @param {(event: object) => void} onEvent  - Called for each SSE event.
- * @param {(err: Error) => void}    onError  - Called on network/stream errors.
- * @returns {() => void} cancel - Call to abort the stream.
+ * @param {Array<{role,content}>} messages  Full history incl. the new user message.
+ * @param {object}               settings   model, maxTokens, temperature, enableThinking
+ * @param {Function}             onEvent    Called for each parsed SSE event object.
+ * @param {Function}             onError    Called on network-level errors.
+ * @returns {Function} cancel — call to abort the stream.
  */
-export function streamChat(messages, onEvent, onError) {
+export function streamChat(messages, settings, onEvent, onError) {
   const controller = new AbortController();
 
   fetch(`${BASE_URL}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages }),
+    body: JSON.stringify({
+      messages,
+      model: settings.model,
+      max_tokens: settings.maxTokens,
+      temperature: settings.temperature,
+      enable_thinking: settings.enableThinking,
+    }),
     signal: controller.signal,
   })
     .then(async (res) => {

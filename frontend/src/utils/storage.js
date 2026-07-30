@@ -1,24 +1,26 @@
-const KEY = "glm_chat_data";
+// ─── Chat history ───────────────────────────────────────────────────────────
 
-function load() {
+const CHAT_KEY = "glm_chat_data";
+
+function loadChats() {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(CHAT_KEY);
     return raw ? JSON.parse(raw) : { sessions: {} };
   } catch {
     return { sessions: {} };
   }
 }
 
-function persist(data) {
+function persistChats(data) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(data));
+    localStorage.setItem(CHAT_KEY, JSON.stringify(data));
   } catch {
-    // localStorage might be full or unavailable (private browsing)
+    // localStorage full or unavailable
   }
 }
 
 export function listSessions() {
-  const { sessions } = load();
+  const { sessions } = loadChats();
   return Object.values(sessions).sort(
     (a, b) => new Date(b.created_at) - new Date(a.created_at)
   );
@@ -33,36 +35,61 @@ export function createSession() {
     title: "New Chat",
     messages: [],
   };
-  const data = load();
+  const data = loadChats();
   data.sessions[id] = session;
-  persist(data);
+  persistChats(data);
   return session;
 }
 
-export function getSession(sessionId) {
-  return load().sessions[sessionId] || null;
-}
-
 export function getMessages(sessionId) {
-  return load().sessions[sessionId]?.messages ?? [];
+  return loadChats().sessions[sessionId]?.messages ?? [];
 }
 
 export function appendMessage(sessionId, message) {
-  const data = load();
+  const data = loadChats();
   if (!data.sessions[sessionId]) return;
   data.sessions[sessionId].messages.push(message);
-  persist(data);
+  persistChats(data);
 }
 
 export function updateSessionTitle(sessionId, title) {
-  const data = load();
+  const data = loadChats();
   if (!data.sessions[sessionId]) return;
   data.sessions[sessionId].title = title;
-  persist(data);
+  persistChats(data);
 }
 
 export function deleteSession(sessionId) {
-  const data = load();
+  const data = loadChats();
   delete data.sessions[sessionId];
-  persist(data);
+  persistChats(data);
+}
+
+// ─── User settings ───────────────────────────────────────────────────────────
+
+const SETTINGS_KEY = "glm_chat_settings";
+
+export const DEFAULT_SETTINGS = {
+  model: "glm-4.7-flash",
+  maxTokens: 4096,
+  temperature: 0.7,
+  enableThinking: true,
+};
+
+export function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+export function saveSettings(settings) {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // ignore
+  }
 }

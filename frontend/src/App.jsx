@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Menu, X, AlertCircle } from "lucide-react";
+import { Menu, X, AlertCircle, Settings2 } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
 import ChatInput from "./components/ChatInput";
+import SettingsPanel from "./components/SettingsPanel";
 import { streamChat } from "./utils/api";
 import {
   listSessions,
@@ -11,6 +12,8 @@ import {
   appendMessage,
   updateSessionTitle,
   deleteSession,
+  loadSettings,
+  saveSettings,
 } from "./utils/storage";
 
 export default function App() {
@@ -20,13 +23,21 @@ export default function App() {
   const [inputValue, setInputValue] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingMsg, setStreamingMsg] = useState(null);
+  const [statusText, setStatusText] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [error, setError] = useState(null);
+  const [settings, setSettings] = useState(loadSettings);
   const stopRef = useRef(null);
 
   useEffect(() => {
     setSessions(listSessions());
   }, []);
+
+  // Persist settings whenever they change
+  useEffect(() => {
+    saveSettings(settings);
+  }, [settings]);
 
   const refreshSessions = () => setSessions(listSessions());
 
@@ -34,6 +45,7 @@ export default function App() {
     setActiveSessionId(sessionId);
     setMessages(getMessages(sessionId));
     setStreamingMsg(null);
+    setStatusText("");
     setError(null);
     setSidebarOpen(false);
   };
@@ -44,6 +56,7 @@ export default function App() {
     setActiveSessionId(session.session_id);
     setMessages([]);
     setStreamingMsg(null);
+    setStatusText("");
     setError(null);
     setSidebarOpen(false);
   };
@@ -58,9 +71,14 @@ export default function App() {
     }
   };
 
+  const handleSettingsChange = (next) => setSettings(next);
+
+  const handleToggleThinking = () =>
+    setSettings((prev) => ({ ...prev, enableThinking: !prev.enableThinking }));
+
   /**
-   * Core send logic — accepts a text string directly so both the input
-   * submit button AND the suggestion cards share identical behaviour.
+   * Core send — accepts a text string so suggestion clicks and keyboard
+   * submission share identical behaviour.
    */
   const sendMessage = useCallback(
     (text) => {
@@ -71,12 +89,12 @@ export default function App() {
       setError(null);
       setIsStreaming(true);
       setStreamingMsg(null);
+      setStatusText("connecting…");
 
-      // Ensure a session exists
       let sessionId = activeSessionId;
       if (!sessionId) {
-        const session = createSession();
-        sessionId = session.session_id;
+        const s = createSession();
+        sessionId = s.session_id;
         setActiveSessionId(sessionId);
         refreshSessions();
       }
@@ -87,18 +105,18 @@ export default function App() {
         content: msg,
         timestamp: new Date().toISOString(),
       };
-
       appendMessage(sessionId, userMessage);
       setMessages((prev) => [...prev, userMessage]);
 
-      // Auto-title on first message
       const saved = getMessages(sessionId);
       if (saved.length === 1) {
-        updateSessionTitle(sessionId, msg.length > 50 ? msg.slice(0, 50) + "…" : msg);
+        updateSessionTitle(
+          sessionId,
+          msg.length > 50 ? msg.slice(0, 50) + "…" : msg
+        );
         refreshSessions();
       }
 
-      // Build history to send (role + content only)
       const history = getMessages(sessionId).map((m) => ({
         role: m.role,
         content: m.content,
@@ -108,13 +126,18 @@ export default function App() {
       let assistantContent = "";
       let assistantThinking = "";
 
+      // Capture settings snapshot at send time
+      const snap = { ...settings };
+
       const cancel = streamChat(
         history,
+        snap,
         (event) => {
           switch (event.type) {
-            case "status":
-              // Server keepalive / connection confirmed — no UI change needed
+            case "status": {
+              setStatusText(event.message ?? "");
               break;
+            }
 
             case "thinking": {
               assistantThinking += event.content;
@@ -126,6 +149,7 @@ export default function App() {
                 streamingThinking: assistantThinking,
                 timestamp: new Date().toISOString(),
               }));
+              setStatusText("");
               break;
             }
 
@@ -138,6 +162,7 @@ export default function App() {
                 content: assistantContent,
                 timestamp: new Date().toISOString(),
               }));
+              setStatusText("");
               break;
             }
 
@@ -145,6 +170,7 @@ export default function App() {
               setError(event.message || "An error occurred. Please try again.");
               setIsStreaming(false);
               setStreamingMsg(null);
+              setStatusText("");
               break;
             }
 
@@ -160,6 +186,7 @@ export default function App() {
               setMessages((prev) => [...prev, finalMsg]);
               setStreamingMsg(null);
               setIsStreaming(false);
+              setStatusText("");
               refreshSessions();
               break;
             }
@@ -172,26 +199,17 @@ export default function App() {
           setError(err.message || "Connection error — please try again.");
           setIsStreaming(false);
           setStreamingMsg(null);
+          setStatusText("");
         }
       );
 
       stopRef.current = cancel;
     },
-    [isStreaming, activeSessionId]
+    [isStreaming, activeSessionId, settings]
   );
 
-  // Bound to the Send button / Enter key in ChatInput
-  const handleSend = useCallback(() => {
-    sendMessage(inputValue);
-  }, [inputValue, sendMessage]);
-
-  // Clicking a suggestion card immediately sends that text
-  const handleSuggestion = useCallback(
-    (text) => {
-      sendMessage(text);
-    },
-    [sendMessage]
-  );
+  const handleSend = useCallback(() => sendMessage(inputValue), [inputValue, sendMessage]);
+  const handleSuggestion = useCallback((text) => sendMessage(text), [sendMessage]);
 
   const handleStop = () => {
     if (stopRef.current) {
@@ -201,7 +219,7 @@ export default function App() {
     if (streamingMsg) {
       const stopped = {
         ...streamingMsg,
-        content: (streamingMsg.content || "") + " *(generation stopped)*",
+        content: (streamingMsg.content || "") + " *(stopped)*",
         thinking: streamingMsg.streamingThinking || undefined,
         streamingThinking: undefined,
       };
@@ -210,19 +228,28 @@ export default function App() {
     }
     setStreamingMsg(null);
     setIsStreaming(false);
+    setStatusText("");
   };
 
   const activeTitle =
-    sessions.find((s) => s.session_id === activeSessionId)?.title ||
-    "GLM-4.7-Flash";
+    sessions.find((s) => s.session_id === activeSessionId)?.title ?? "GLM Chat";
 
   return (
-    <div className="flex h-screen bg-gray-900 text-gray-100 overflow-hidden">
+    <div className="flex h-[100dvh] bg-gray-900 text-gray-100 overflow-hidden">
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-20 md:hidden"
+          className="fixed inset-0 bg-black/60 z-20 md:hidden"
           onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Settings modal */}
+      {settingsOpen && (
+        <SettingsPanel
+          settings={settings}
+          onChange={handleSettingsChange}
+          onClose={() => setSettingsOpen(false)}
         />
       )}
 
@@ -237,31 +264,42 @@ export default function App() {
 
       <div className="flex flex-col flex-1 min-w-0">
         {/* Top bar */}
-        <header className="flex items-center gap-3 px-4 py-3 border-b border-gray-800 bg-gray-900">
+        <header className="flex items-center gap-2 px-3 sm:px-4 py-3 border-b border-gray-800 bg-gray-900 flex-shrink-0">
           <button
             onClick={() => setSidebarOpen((o) => !o)}
-            className="md:hidden p-2 rounded-lg hover:bg-gray-800 text-gray-400"
+            className="md:hidden p-2.5 rounded-xl hover:bg-gray-800 text-gray-400 min-w-[44px] min-h-[44px] flex items-center justify-center touch-manipulation"
           >
             {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
+
           <div className="flex-1 min-w-0">
             <h2 className="text-sm font-semibold text-white truncate">{activeTitle}</h2>
-            <p className="text-xs text-gray-500">Advanced reasoning model</p>
+            <p className="text-xs text-gray-500 hidden sm:block">Advanced reasoning model</p>
           </div>
+
+          {/* Settings button */}
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="p-2.5 rounded-xl hover:bg-gray-800 text-gray-400 hover:text-white min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors touch-manipulation"
+            title="Settings"
+          >
+            <Settings2 size={18} />
+          </button>
+
           <div className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-            <span className="text-xs text-gray-400">Online</span>
+            <span className="text-xs text-gray-400 hidden sm:inline">Online</span>
           </div>
         </header>
 
         {/* Error banner */}
         {error && (
-          <div className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 border-b border-red-500/20 text-red-400 text-sm animate-fade-in">
+          <div className="flex items-center gap-2 px-4 py-3 bg-red-500/10 border-b border-red-500/20 text-red-400 text-sm animate-fade-in flex-shrink-0">
             <AlertCircle size={15} className="flex-shrink-0" />
-            <span className="flex-1">{error}</span>
+            <span className="flex-1 text-[13px] sm:text-sm">{error}</span>
             <button
               onClick={() => setError(null)}
-              className="text-red-500 hover:text-red-300 ml-2"
+              className="p-1.5 text-red-500 hover:text-red-300 touch-manipulation"
             >
               <X size={14} />
             </button>
@@ -272,6 +310,7 @@ export default function App() {
           messages={messages}
           streamingMsg={streamingMsg}
           isStreaming={isStreaming}
+          statusText={statusText}
           onSuggestion={handleSuggestion}
         />
 
@@ -280,8 +319,11 @@ export default function App() {
           onChange={setInputValue}
           onSend={handleSend}
           onStop={handleStop}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onToggleThinking={handleToggleThinking}
           isStreaming={isStreaming}
           disabled={false}
+          settings={settings}
         />
       </div>
     </div>
