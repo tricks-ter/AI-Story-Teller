@@ -1,4 +1,4 @@
-import { X, Cpu, Brain, Sliders, Thermometer, ChevronRight } from "lucide-react";
+import { X, Cpu, Brain, Sliders, Thermometer, ChevronRight, Search, Globe } from "lucide-react";
 
 const MODELS = [
   {
@@ -184,7 +184,7 @@ export default function SettingsPanel({ settings, onChange, onClose }) {
           </section>
 
           {/* ── Temperature ───────────────────────────────────────────── */}
-          <section className="pb-2">
+          <section>
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <Thermometer size={15} className="text-gray-400" />
@@ -205,6 +205,48 @@ export default function SettingsPanel({ settings, onChange, onClose }) {
             <div className="flex justify-between text-xs text-gray-500 mt-1">
               <span>Focused / deterministic</span>
               <span>Creative / varied</span>
+            </div>
+          </section>
+
+          {/* ── Tools ─────────────────────────────────────────────────── */}
+          <section className="border-t border-gray-800 pt-5">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
+              Tools (AI can call these automatically)
+            </p>
+
+            {/* Web Search */}
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-start gap-3">
+                <Search size={15} className="text-gray-400 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-gray-300">Web Search</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    AI searches the internet for real-time info.{" "}
+                    <span className="text-yellow-500">$0.01/search</span>
+                  </p>
+                </div>
+              </div>
+              <Toggle
+                checked={settings.enableWebSearch}
+                onChange={(v) => update("enableWebSearch", v)}
+              />
+            </div>
+
+            {/* Web Reader */}
+            <div className="flex items-start justify-between pb-2">
+              <div className="flex items-start gap-3">
+                <Globe size={15} className="text-gray-400 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-gray-300">Web Reader</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    AI reads any URL you share in the chat. Free.
+                  </p>
+                </div>
+              </div>
+              <Toggle
+                checked={settings.enableWebReader}
+                onChange={(v) => update("enableWebReader", v)}
+              />
             </div>
           </section>
         </div>

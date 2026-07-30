@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Bot, User, ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import SourcesList from "./SourcesList";
 
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false);
@@ -142,6 +143,11 @@ export default function MessageBubble({ message, isStreaming }) {
           {/* Streaming cursor */}
           {isStreaming && !isUser && (
             <span className="inline-block w-0.5 h-4 bg-brand-400 animate-pulse ml-0.5 align-middle" />
+          )}
+
+          {/* Web search sources */}
+          {!isUser && !isStreaming && (
+            <SourcesList sources={message.sources} />
           )}
 
           {/* Copy (desktop hover) */}

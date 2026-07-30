@@ -29,6 +29,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [settings, setSettings] = useState(loadSettings);
   const stopRef = useRef(null);
+  const pendingSourcesRef = useRef([]);
 
   useEffect(() => {
     setSessions(listSessions());
@@ -91,6 +92,8 @@ export default function App() {
       setStreamingMsg(null);
       setStatusText("connecting…");
 
+      pendingSourcesRef.current = [];
+
       let sessionId = activeSessionId;
       if (!sessionId) {
         const s = createSession();
@@ -139,6 +142,34 @@ export default function App() {
               break;
             }
 
+            case "tool_call": {
+              const isSearch = event.tool === "web_search";
+              const detail = isSearch
+                ? event.args?.query
+                : event.args?.url;
+              setStatusText(
+                `${isSearch ? "🔍 Searching" : "📄 Reading"}: "${detail ?? "…"}"`
+              );
+              break;
+            }
+
+            case "tool_result": {
+              const isSearch = event.tool === "web_search";
+              if (isSearch && event.count > 0) {
+                setStatusText(`✓ Found ${event.count} results`);
+              } else if (!isSearch && event.title) {
+                setStatusText(`✓ Read: ${event.title}`);
+              } else {
+                setStatusText("✓ Tool done");
+              }
+              break;
+            }
+
+            case "sources": {
+              pendingSourcesRef.current = event.sources ?? [];
+              break;
+            }
+
             case "thinking": {
               assistantThinking += event.content;
               setStreamingMsg((prev) => ({
@@ -180,8 +211,10 @@ export default function App() {
                 role: "assistant",
                 content: assistantContent,
                 thinking: assistantThinking || undefined,
+                sources: pendingSourcesRef.current.length ? pendingSourcesRef.current : undefined,
                 timestamp: new Date().toISOString(),
               };
+              pendingSourcesRef.current = [];
               appendMessage(sessionId, finalMsg);
               setMessages((prev) => [...prev, finalMsg]);
               setStreamingMsg(null);
