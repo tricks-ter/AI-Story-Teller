@@ -24,7 +24,6 @@ export default function App() {
   const [error, setError] = useState(null);
   const stopRef = useRef(null);
 
-  // Load sessions from localStorage on mount
   useEffect(() => {
     setSessions(listSessions());
   }, []);
@@ -59,118 +58,140 @@ export default function App() {
     }
   };
 
-  const handleSend = useCallback(() => {
-    const msg = inputValue.trim();
-    if (!msg || isStreaming) return;
+  /**
+   * Core send logic — accepts a text string directly so both the input
+   * submit button AND the suggestion cards share identical behaviour.
+   */
+  const sendMessage = useCallback(
+    (text) => {
+      const msg = typeof text === "string" ? text.trim() : "";
+      if (!msg || isStreaming) return;
 
-    setInputValue("");
-    setError(null);
-    setIsStreaming(true);
-    setStreamingMsg(null);
+      setInputValue("");
+      setError(null);
+      setIsStreaming(true);
+      setStreamingMsg(null);
 
-    // Ensure a session exists
-    let sessionId = activeSessionId;
-    if (!sessionId) {
-      const session = createSession();
-      sessionId = session.session_id;
-      setActiveSessionId(sessionId);
-      refreshSessions();
-    }
-
-    const userMessage = {
-      id: `user-${Date.now()}`,
-      role: "user",
-      content: msg,
-      timestamp: new Date().toISOString(),
-    };
-
-    // Persist user message and update UI immediately
-    appendMessage(sessionId, userMessage);
-    setMessages((prev) => [...prev, userMessage]);
-
-    // Auto-title from first message
-    const currentMessages = getMessages(sessionId);
-    if (currentMessages.length === 1) {
-      const title = msg.length > 50 ? msg.slice(0, 50) + "…" : msg;
-      updateSessionTitle(sessionId, title);
-      refreshSessions();
-    }
-
-    // Build the history to send: role + content only (no internal fields)
-    const history = getMessages(sessionId).map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
-
-    const assistantId = `assistant-${Date.now()}`;
-    let assistantContent = "";
-    let assistantThinking = "";
-
-    const cancel = streamChat(
-      history,
-      (event) => {
-        switch (event.type) {
-          case "thinking": {
-            assistantThinking += event.content;
-            setStreamingMsg((prev) => ({
-              ...(prev ?? {}),
-              id: assistantId,
-              role: "assistant",
-              content: assistantContent,
-              streamingThinking: assistantThinking,
-              timestamp: new Date().toISOString(),
-            }));
-            break;
-          }
-
-          case "content": {
-            assistantContent += event.content;
-            setStreamingMsg((prev) => ({
-              ...(prev ?? {}),
-              id: assistantId,
-              role: "assistant",
-              content: assistantContent,
-              timestamp: new Date().toISOString(),
-            }));
-            break;
-          }
-
-          case "error": {
-            setError(event.message || "An error occurred during streaming");
-            setIsStreaming(false);
-            setStreamingMsg(null);
-            break;
-          }
-
-          case "done": {
-            const finalMsg = {
-              id: assistantId,
-              role: "assistant",
-              content: assistantContent,
-              thinking: assistantThinking || undefined,
-              timestamp: new Date().toISOString(),
-            };
-            appendMessage(sessionId, finalMsg);
-            setMessages((prev) => [...prev, finalMsg]);
-            setStreamingMsg(null);
-            setIsStreaming(false);
-            refreshSessions();
-            break;
-          }
-
-          default:
-            break;
-        }
-      },
-      (err) => {
-        setError(err.message || "Connection error — please try again");
-        setIsStreaming(false);
-        setStreamingMsg(null);
+      // Ensure a session exists
+      let sessionId = activeSessionId;
+      if (!sessionId) {
+        const session = createSession();
+        sessionId = session.session_id;
+        setActiveSessionId(sessionId);
+        refreshSessions();
       }
-    );
 
-    stopRef.current = cancel;
-  }, [inputValue, isStreaming, activeSessionId]);
+      const userMessage = {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: msg,
+        timestamp: new Date().toISOString(),
+      };
+
+      appendMessage(sessionId, userMessage);
+      setMessages((prev) => [...prev, userMessage]);
+
+      // Auto-title on first message
+      const saved = getMessages(sessionId);
+      if (saved.length === 1) {
+        updateSessionTitle(sessionId, msg.length > 50 ? msg.slice(0, 50) + "…" : msg);
+        refreshSessions();
+      }
+
+      // Build history to send (role + content only)
+      const history = getMessages(sessionId).map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      const assistantId = `assistant-${Date.now()}`;
+      let assistantContent = "";
+      let assistantThinking = "";
+
+      const cancel = streamChat(
+        history,
+        (event) => {
+          switch (event.type) {
+            case "status":
+              // Server keepalive / connection confirmed — no UI change needed
+              break;
+
+            case "thinking": {
+              assistantThinking += event.content;
+              setStreamingMsg((prev) => ({
+                ...(prev ?? {}),
+                id: assistantId,
+                role: "assistant",
+                content: assistantContent,
+                streamingThinking: assistantThinking,
+                timestamp: new Date().toISOString(),
+              }));
+              break;
+            }
+
+            case "content": {
+              assistantContent += event.content;
+              setStreamingMsg((prev) => ({
+                ...(prev ?? {}),
+                id: assistantId,
+                role: "assistant",
+                content: assistantContent,
+                timestamp: new Date().toISOString(),
+              }));
+              break;
+            }
+
+            case "error": {
+              setError(event.message || "An error occurred. Please try again.");
+              setIsStreaming(false);
+              setStreamingMsg(null);
+              break;
+            }
+
+            case "done": {
+              const finalMsg = {
+                id: assistantId,
+                role: "assistant",
+                content: assistantContent,
+                thinking: assistantThinking || undefined,
+                timestamp: new Date().toISOString(),
+              };
+              appendMessage(sessionId, finalMsg);
+              setMessages((prev) => [...prev, finalMsg]);
+              setStreamingMsg(null);
+              setIsStreaming(false);
+              refreshSessions();
+              break;
+            }
+
+            default:
+              break;
+          }
+        },
+        (err) => {
+          setError(err.message || "Connection error — please try again.");
+          setIsStreaming(false);
+          setStreamingMsg(null);
+        }
+      );
+
+      stopRef.current = cancel;
+    },
+    [isStreaming, activeSessionId]
+  );
+
+  // Bound to the Send button / Enter key in ChatInput
+  const handleSend = useCallback(() => {
+    sendMessage(inputValue);
+  }, [inputValue, sendMessage]);
+
+  // Clicking a suggestion card immediately sends that text
+  const handleSuggestion = useCallback(
+    (text) => {
+      sendMessage(text);
+    },
+    [sendMessage]
+  );
 
   const handleStop = () => {
     if (stopRef.current) {
@@ -191,10 +212,9 @@ export default function App() {
     setIsStreaming(false);
   };
 
-  const handleSuggestion = (text) => setInputValue(text);
-
   const activeTitle =
-    sessions.find((s) => s.session_id === activeSessionId)?.title || "GLM-4.7-Flash";
+    sessions.find((s) => s.session_id === activeSessionId)?.title ||
+    "GLM-4.7-Flash";
 
   return (
     <div className="flex h-screen bg-gray-900 text-gray-100 overflow-hidden">
@@ -236,10 +256,13 @@ export default function App() {
 
         {/* Error banner */}
         {error && (
-          <div className="flex items-center gap-2 px-4 py-2 bg-red-500/10 border-b border-red-500/20 text-red-400 text-sm animate-fade-in">
-            <AlertCircle size={15} />
+          <div className="flex items-center gap-2 px-4 py-2.5 bg-red-500/10 border-b border-red-500/20 text-red-400 text-sm animate-fade-in">
+            <AlertCircle size={15} className="flex-shrink-0" />
             <span className="flex-1">{error}</span>
-            <button onClick={() => setError(null)} className="text-red-500 hover:text-red-300">
+            <button
+              onClick={() => setError(null)}
+              className="text-red-500 hover:text-red-300 ml-2"
+            >
               <X size={14} />
             </button>
           </div>
