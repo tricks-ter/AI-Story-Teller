@@ -27,6 +27,8 @@ export function streamChat(messages, settings, onEvent, onError) {
       max_tokens: settings.maxTokens,
       temperature: settings.temperature,
       enable_thinking: settings.enableThinking,
+      enable_web_search: settings.enableWebSearch,
+      enable_web_reader: settings.enableWebReader,
     }),
     signal: controller.signal,
   })

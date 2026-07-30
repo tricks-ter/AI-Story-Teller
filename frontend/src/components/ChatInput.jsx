@@ -1,5 +1,5 @@
 import { useRef, useEffect } from "react";
-import { Send, Square, Brain, Settings2 } from "lucide-react";
+import { Send, Square, Brain, Settings2, Search, Globe } from "lucide-react";
 
 export default function ChatInput({
   value,
@@ -57,12 +57,26 @@ export default function ChatInput({
         >
           <Brain size={12} />
           <span className="hidden sm:inline">
-            {settings?.enableThinking ? "Reasoning ON" : "Reasoning OFF"}
+            {settings?.enableThinking ? "Reasoning" : "No Reasoning"}
           </span>
           <span className="sm:hidden">
-            {settings?.enableThinking ? "ON" : "OFF"}
+            {settings?.enableThinking ? "✓" : "–"}
           </span>
         </button>
+
+        {/* Tool badges (shown only when enabled) */}
+        {settings?.enableWebSearch && (
+          <span className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-400 text-xs font-medium">
+            <Search size={11} />
+            <span className="hidden sm:inline">Web</span>
+          </span>
+        )}
+        {settings?.enableWebReader && (
+          <span className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-sky-500/15 text-sky-400 text-xs font-medium">
+            <Globe size={11} />
+            <span className="hidden sm:inline">Reader</span>
+          </span>
+        )}
       </div>
 
       {/* ── Input row ───────────────────────────────────────────────── */}
