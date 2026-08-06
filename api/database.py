@@ -1,116 +1,87 @@
+# api/database.py
 import os
 import psycopg2
-from psycopg2 import sql, extras
-from psycopg2.pool import SimpleConnectionPool
-from typing import Optional, Dict, List, Any
+from psycopg2 import extras
 import json
 from dotenv import load_dotenv
 import logging
 
-# Load environment variables
 load_dotenv()
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class Database:
     def __init__(self):
-        self.pool: Optional[SimpleConnectionPool] = None
         self.database_url = os.getenv("DATABASE_URL")
-        
-        # Initialize connection pool
-        if self.database_url:
-            self._initialize_pool()
-    
-    def _initialize_pool(self):
-        """Initialize connection pool with proper SSL handling"""
-        try:
-            # Parse and fix connection string for SSL
-            db_url = self.database_url
-            
-            # Ensure SSL is required for Neon
-            if "sslmode" not in db_url:
-                separator = "&" if "?" in db_url else "?"
-                db_url += f"{separator}sslmode=require"
-            
-            # Create connection pool
-            self.pool = SimpleConnectionPool(
-                minconn=1,
-                maxconn=5,  # Reduced for serverless compatibility
-                dsn=db_url
-            )
-            logger.info("✅ Database connection pool initialized")
-            
-        except Exception as e:
-            logger.error(f"❌ Database connection error: {e}")
-            raise
-    
+        if self.database_url and "sslmode" not in self.database_url:
+            separator = "&" if "?" in self.database_url else "?"
+            self.database_url += f"{separator}sslmode=require"
+
     def get_connection(self):
-        """Get connection from pool with fallback"""
-        if not self.pool:
-            self._initialize_pool()
-        
+        if not self.database_url: return None
         try:
-            return self.pool.getconn()
-        except Exception as e:
-            logger.error(f"Connection error: {e}")
-            # Fallback: create direct connection
             return psycopg2.connect(self.database_url)
-    
-    def return_connection(self, conn):
-        """Return connection to pool safely"""
-        if self.pool and conn:
-            try:
-                self.pool.putconn(conn)
-            except Exception as e:
-                logger.warning(f"Error returning connection: {e}")
-                conn.close()
-    
-    def execute_query(self, query: str, params: tuple = None, fetch: str = "all") -> Any:
-        """
-        Execute SQL query with parameters and proper error handling
-        """
-        conn = None
-        cursor = None
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
-            
-            # Execute query
-            cursor.execute(query, params or ())
-            
-            # Fetch results if needed
-            if fetch == "all":
-                results = cursor.fetchall()
-            elif fetch == "one":
-                results = cursor.fetchone()
-            else:
-                results = None
-                conn.commit()
-            
-            return results
-            
         except Exception as e:
-            if conn:
-                conn.rollback()
-            logger.error(f"Database query error: {e}")
+            logger.error(f"DB Connection error: {e}")
+            return None
+
+    def execute_query(self, query, params=None, fetch="all", commit=False):
+        conn = self.get_connection()
+        if not conn: return None
+        try:
+            with conn.cursor(cursor_factory=extras.RealDictCursor) as cur:
+                cur.execute(query, params or ())
+                if fetch == "all": res = cur.fetchall()
+                elif fetch == "one": res = cur.fetchone()
+                else: res = None
+                
+                if commit: conn.commit()
+                return res
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"DB Query error: {e}")
             raise
         finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                self.return_connection(conn)
-    
-    def test_connection(self) -> bool:
-        """Test database connection"""
-        try:
-            result = self.execute_query("SELECT 1 as test", fetch="one")
-            return result is not None
-        except Exception:
-            return False
-    
-    # ... (keep other methods same as before)
+            conn.close()
 
-# Global database instance
+    def init_tables(self):
+        if not self.database_url: return
+        queries = [
+            """CREATE TABLE IF NOT EXISTS chat_sessions (
+                id VARCHAR(36) PRIMARY KEY,
+                title VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS chat_messages (
+                id SERIAL PRIMARY KEY,
+                session_id VARCHAR(36) REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                role VARCHAR(20) NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                metadata JSONB
+            )"""
+        ]
+        for q in queries:
+            try: self.execute_query(q, fetch="none", commit=True)
+            except Exception as e: logger.error(f"Table creation error: {e}")
+
+    def ensure_session(self, session_id, title="New Chat"):
+        if not self.database_url: return
+        try:
+            self.execute_query(
+                "INSERT INTO chat_sessions (id, title) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+                (session_id, title), fetch="none", commit=True
+            )
+        except Exception as e: logger.error(f"Session ensure error: {e}")
+
+    def add_message(self, session_id, role, content, metadata=None):
+        if not self.database_url: return
+        try:
+            self.execute_query(
+                "INSERT INTO chat_messages (session_id, role, content, metadata) VALUES (%s, %s, %s, %s)",
+                (session_id, role, content, json.dumps(metadata) if metadata else None),
+                fetch="none", commit=True
+            )
+        except Exception as e: logger.error(f"Message add error: {e}")
+
 db = Database()
