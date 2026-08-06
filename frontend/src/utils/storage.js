@@ -74,6 +74,8 @@ export const DEFAULT_SETTINGS = {
   maxTokens: 4096,
   temperature: 0.7,
   enableThinking: true,
+  enableWebSearch: false,  // opt-in — costs $0.01/use on Z.AI
+  enableWebReader: false,  // opt-in — reads URLs shared in chat
 };
 
 export function loadSettings() {

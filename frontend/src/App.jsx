@@ -21,6 +21,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [settings, setSettings] = useState(loadSettings);
   const stopRef = useRef(null);
+  const pendingSourcesRef = useRef([]);
 
   useEffect(() => { setSessions(listSessions()); }, []);
   useEffect(() => { saveSettings(settings); }, [settings]);
@@ -35,30 +36,178 @@ export default function App() {
   const handleToggleThinking = () =>
     setSettings((prev) => ({ ...prev, enableThinking: !prev.enableThinking }));
 
-  const sendMessage = useCallback((text) => {
-    const msg = typeof text === "string" ? text.trim() : "";
-    if (!msg || isStreaming) return;
-    setInputValue(""); setError(null); setIsStreaming(true); setStreamingMsg(null); setStatusText("connecting…");
-    let sessionId = activeSessionId;
-    if (!sessionId) { const s = createSession(); sessionId = s.session_id; setActiveSessionId(sessionId); refreshSessions(); }
-    const userMessage = { id: `user-${Date.now()}`, role: "user", content: msg, timestamp: new Date().toISOString() };
-    appendMessage(sessionId, userMessage); setMessages((prev) => [...prev, userMessage]);
-    if (getMessages(sessionId).length === 1) { updateSessionTitle(sessionId, msg.length > 50 ? msg.slice(0, 50) + "…" : msg); refreshSessions(); }
-    const history = getMessages(sessionId).map((m) => ({ role: m.role, content: m.content }));
-    const assistantId = `assistant-${Date.now()}`;
-    let assistantContent = ""; let assistantThinking = "";
-    const snap = { ...settings };
+  /**
+   * Core send — accepts a text string so suggestion clicks and keyboard
+   * submission share identical behaviour.
+   */
+  const sendMessage = useCallback(
+    (text) => {
+      const msg = typeof text === "string" ? text.trim() : "";
+      if (!msg || isStreaming) return;
 
-    // FIX: Added sessionId as first argument
-    const cancel = streamChat(sessionId, history, snap, (event) => {
-      if (event.type === "status") setStatusText(event.message ?? "");
-      else if (event.type === "thinking") { assistantThinking += event.content; setStreamingMsg((prev) => ({ ...(prev ?? {}), id: assistantId, role: "assistant", content: assistantContent, streamingThinking: assistantThinking, timestamp: new Date().toISOString() })); setStatusText(""); }
-      else if (event.type === "content") { assistantContent += event.content; setStreamingMsg((prev) => ({ ...(prev ?? {}), id: assistantId, role: "assistant", content: assistantContent, timestamp: new Date().toISOString() })); setStatusText(""); }
-      else if (event.type === "error") { setError(event.message || "Error"); setIsStreaming(false); setStreamingMsg(null); setStatusText(""); }
-      else if (event.type === "done") { appendMessage(sessionId, { id: assistantId, role: "assistant", content: assistantContent, thinking: assistantThinking || undefined, timestamp: new Date().toISOString() }); setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: assistantContent, thinking: assistantThinking || undefined, timestamp: new Date().toISOString() }]); setStreamingMsg(null); setIsStreaming(false); setStatusText(""); refreshSessions(); }
-    }, (err) => { setError(err.message || "Connection error"); setIsStreaming(false); setStreamingMsg(null); setStatusText(""); });
-    stopRef.current = cancel;
-  }, [isStreaming, activeSessionId, settings]);
+      setInputValue("");
+      setError(null);
+      setIsStreaming(true);
+      setStreamingMsg(null);
+      setStatusText("connecting…");
+
+      pendingSourcesRef.current = [];
+
+      let sessionId = activeSessionId;
+      if (!sessionId) {
+        const s = createSession();
+        sessionId = s.session_id;
+        setActiveSessionId(sessionId);
+        refreshSessions();
+      }
+
+      const userMessage = {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: msg,
+        timestamp: new Date().toISOString(),
+      };
+      appendMessage(sessionId, userMessage);
+      setMessages((prev) => [...prev, userMessage]);
+
+      const saved = getMessages(sessionId);
+      if (saved.length === 1) {
+        updateSessionTitle(
+          sessionId,
+          msg.length > 50 ? msg.slice(0, 50) + "…" : msg
+        );
+        refreshSessions();
+      }
+
+      const history = getMessages(sessionId).map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      const assistantId = `assistant-${Date.now()}`;
+      let assistantContent = "";
+      let assistantThinking = "";
+
+      // Capture settings snapshot at send time
+      const snap = { ...settings };
+
+      const cancel = streamChat(
+        history,
+        snap,
+        (event) => {
+          switch (event.type) {
+            case "status": {
+              setStatusText(event.message ?? "");
+              break;
+            }
+
+            case "tool_call": {
+              if (event.tool === "web_search") {
+                setStatusText("🔍 Searching the web…");
+              } else {
+                const url = event.args?.url ?? "…";
+                setStatusText(`📄 Reading: "${url}"`);
+              }
+              break;
+            }
+
+            case "tool_result": {
+              if (event.tool === "web_search") {
+                if (event.inline) {
+                  // Built-in search: results are embedded as [ref_N] in content
+                  setStatusText("✓ Web search done — citations are in the response");
+                } else if (event.success) {
+                  setStatusText(`✓ Found ${event.count ?? ""} results`);
+                } else {
+                  setStatusText("⚠ Web search unavailable");
+                }
+              } else if (event.tool === "web_reader") {
+                setStatusText(
+                  event.success
+                    ? `✓ Read: ${event.title || "page"}`
+                    : "⚠ Could not read that URL"
+                );
+              } else {
+                setStatusText("✓ Tool done");
+              }
+              break;
+            }
+
+            case "sources": {
+              pendingSourcesRef.current = event.sources ?? [];
+              break;
+            }
+
+            case "thinking": {
+              assistantThinking += event.content;
+              setStreamingMsg((prev) => ({
+                ...(prev ?? {}),
+                id: assistantId,
+                role: "assistant",
+                content: assistantContent,
+                streamingThinking: assistantThinking,
+                timestamp: new Date().toISOString(),
+              }));
+              setStatusText("");
+              break;
+            }
+
+            case "content": {
+              assistantContent += event.content;
+              setStreamingMsg((prev) => ({
+                ...(prev ?? {}),
+                id: assistantId,
+                role: "assistant",
+                content: assistantContent,
+                timestamp: new Date().toISOString(),
+              }));
+              setStatusText("");
+              break;
+            }
+
+            case "error": {
+              setError(event.message || "An error occurred. Please try again.");
+              setIsStreaming(false);
+              setStreamingMsg(null);
+              setStatusText("");
+              break;
+            }
+
+            case "done": {
+              const finalMsg = {
+                id: assistantId,
+                role: "assistant",
+                content: assistantContent,
+                thinking: assistantThinking || undefined,
+                sources: pendingSourcesRef.current.length ? pendingSourcesRef.current : undefined,
+                timestamp: new Date().toISOString(),
+              };
+              pendingSourcesRef.current = [];
+              appendMessage(sessionId, finalMsg);
+              setMessages((prev) => [...prev, finalMsg]);
+              setStreamingMsg(null);
+              setIsStreaming(false);
+              setStatusText("");
+              refreshSessions();
+              break;
+            }
+
+            default:
+              break;
+          }
+        },
+        (err) => {
+          setError(err.message || "Connection error — please try again.");
+          setIsStreaming(false);
+          setStreamingMsg(null);
+          setStatusText("");
+        }
+      );
+
+      stopRef.current = cancel;
+    },
+    [isStreaming, activeSessionId, settings]
+  );
 
   const handleSend = useCallback(() => sendMessage(inputValue), [inputValue, sendMessage]);
   const handleSuggestion = useCallback((text) => sendMessage(text), [sendMessage]);
