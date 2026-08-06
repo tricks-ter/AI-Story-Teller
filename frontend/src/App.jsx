@@ -75,7 +75,6 @@ export default function App() {
 
   const handleToggleThinking = () =>
     setSettings((prev) => ({ ...prev, enableThinking: !prev.enableThinking }));
-
   /**
    * Core send — accepts a text string so suggestion clicks and keyboard
    * submission share identical behaviour.
@@ -130,6 +129,7 @@ export default function App() {
       const snap = { ...settings };
 
       const cancel = streamChat(
+        sessionId,
         history,
         snap,
         (event) => {
