@@ -14,7 +14,7 @@ export function streamChat(sessionId, messages, settings, onEvent, onError) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      session_id: sessionId, // Added
+      session_id: sessionId, // <-- Required for database saving
       messages,
       model: settings.model,
       max_tokens: settings.maxTokens,
@@ -44,6 +44,5 @@ export function streamChat(sessionId, messages, settings, onEvent, onError) {
       }
     })
     .catch((err) => { if (err.name !== "AbortError") onError(err); });
-
   return () => controller.abort();
 }
