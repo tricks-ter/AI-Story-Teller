@@ -17,18 +17,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from zai import ZaiClient
+from database import db
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="GLM Chat API", version="4.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="GLM Chat API", version="2.1.0", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
 API_KEY      = os.getenv("ZAI_API_KEY", "")
 ZAI_API_BASE = "https://api.z.ai/api"
@@ -154,7 +151,6 @@ class MessageItem(BaseModel):
     role: str
     content: str
 
-
 class ChatRequest(BaseModel):
     messages:           list[MessageItem]
     model:              str   = DEFAULT_MODEL
@@ -169,7 +165,6 @@ class ChatRequest(BaseModel):
 
 router = APIRouter(prefix="/api")
 
-
 @router.get("/health")
 def health():
     return {
@@ -182,12 +177,16 @@ def health():
 
 @router.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    if not request.messages:
-        raise HTTPException(status_code=400, detail="messages must not be empty")
+    if not request.messages: raise HTTPException(status_code=400, detail="messages must not be empty")
+    last_msg = request.messages[-1]
+    if last_msg.role == "user":
+        db.ensure_session(request.session_id, last_msg.content[:50] if len(last_msg.content) > 50 else "New Chat")
+        db.add_message(request.session_id, "user", last_msg.content)
 
     model  = request.model if request.model in ALLOWED_MODELS else DEFAULT_MODEL
     client = get_client()
     history = [{"role": m.role, "content": m.content} for m in request.messages]
+    full_content = ""
 
     async def generate() -> AsyncGenerator[str, None]:
         # ── Flush first byte so Vercel starts streaming immediately ───────────
@@ -378,11 +377,6 @@ async def chat_stream(request: ChatRequest):
 
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
 app.include_router(router)

@@ -1,14 +1,17 @@
 {
   "buildCommand": "cd frontend && npm install && npm run build",
   "outputDirectory": "frontend/dist",
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/main.py"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
+  "functions": {
+    "api/main.py": {
+      "includeFiles": "api/**/*"
     }
-  ]
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/main.py" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "env": {
+    "DATABASE_URL": "@database_url",
+    "ZAI_API_KEY": "@zai_api_key"
+  }
 }

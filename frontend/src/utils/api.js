@@ -1,3 +1,4 @@
+// frontend/src/utils/api.js
 const _raw = import.meta.env.VITE_API_URL;
 const BASE_URL = _raw ? _raw.replace(/\/$/, "") + "/api" : "/api";
 
@@ -7,21 +8,13 @@ export async function checkHealth() {
   return res.json();
 }
 
-/**
- * Open a streaming chat request.
- * @param {Array<{role,content}>} messages  Full history incl. the new user message.
- * @param {object}               settings   model, maxTokens, temperature, enableThinking
- * @param {Function}             onEvent    Called for each parsed SSE event object.
- * @param {Function}             onError    Called on network-level errors.
- * @returns {Function} cancel — call to abort the stream.
- */
-export function streamChat(messages, settings, onEvent, onError) {
+export function streamChat(sessionId, messages, settings, onEvent, onError) {
   const controller = new AbortController();
-
   fetch(`${BASE_URL}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      session_id: sessionId, // <-- Required for database saving
       messages,
       model: settings.model,
       max_tokens: settings.maxTokens,
@@ -33,40 +26,25 @@ export function streamChat(messages, settings, onEvent, onError) {
     signal: controller.signal,
   })
     .then(async (res) => {
-      if (!res.ok) {
-        const err = await res.text();
-        onError(new Error(err || "Stream request failed"));
-        return;
-      }
-
+      if (!res.ok) { onError(new Error(await res.text() || "Failed")); return; }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
-
         for (const line of lines) {
           if (line.startsWith("data: ")) {
             const raw = line.slice(6).trim();
             if (!raw) continue;
-            try {
-              onEvent(JSON.parse(raw));
-            } catch {
-              // skip malformed frames
-            }
+            try { onEvent(JSON.parse(raw)); } catch {}
           }
         }
       }
     })
-    .catch((err) => {
-      if (err.name !== "AbortError") onError(err);
-    });
-
+    .catch((err) => { if (err.name !== "AbortError") onError(err); });
   return () => controller.abort();
 }
