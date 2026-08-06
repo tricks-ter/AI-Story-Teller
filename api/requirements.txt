@@ -1,17 +1,6 @@
-
-# FastAPI and ASGI server
 fastapi==0.115.5
 uvicorn==0.32.1
 pydantic==2.9.2
-
-# PostgreSQL driver (compatible with serverless/Vercel)
 psycopg2-binary==2.9.9
-
-# Environment management
 python-dotenv==1.0.1
-
-# Z.AI SDK
 zai-sdk==0.2.3
-
-# Utilities
-python-dateutil==2.8.2
